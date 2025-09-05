@@ -4,7 +4,7 @@
     </a>
 </h2>
 <h2 align="center">
-   NETWORK PROGRAMMING
+   Ứng dụng chat Client-Server sử dụng TCP 
 </h2>
 <div align="center">
     <p align="center">
@@ -20,6 +20,7 @@
 </div>
 
 ## 📖 1. Giới thiệu
+
 ## 🔧 2. Ngôn ngữ lập trình sử dụng: [![Java](https://img.shields.io/badge/Java-007396?style=for-the-badge&logo=java&logoColor=white)](https://www.java.com/)
 
 ## 🚀 3. Công nghệ sử dụng
@@ -27,6 +28,9 @@
 ## 📝 4. Hình ảnh chức năng
 
 ## 5. Các bước cài đặt
+
 ### 1. Bước 1:
+
 ### 2. Bước 2:
+
 ### 3. Bước 3:
