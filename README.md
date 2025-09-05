@@ -22,12 +22,11 @@
 ## 📖 1. Giới thiệu
 ## 🔧 2. Ngôn ngữ lập trình sử dụng: [![Java](https://img.shields.io/badge/Java-007396?style=for-the-badge&logo=java&logoColor=white)](https://www.java.com/)
 
-## 🚀 3. Các project đã thực hiện
+## 🚀 3. Công nghệ sử dụng
 
-### [Khoá 16](./docs/projects/K16/README.md)
+## 📝 4. Hình ảnh chức năng
 
-## 📝 4. License
-
-© 2025 AIoTLab, Faculty of Information Technology, DaiNam University. All rights reserved.
-
----
+## 5. Các bước cài đặt
+### 1. Bước 1:
+### 2. Bước 2:
+### 3. Bước 3:
