@@ -1,9 +1,5 @@
-/**
- * 
- */
-/**
- * 
- */
 module ChatApp {
-	requires java.desktop;
+  requires java.rmi;
+  requires java.desktop;
+  exports chat ;
 }

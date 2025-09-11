@@ -37,14 +37,14 @@ public class ChatServer {
                 in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                 out = new PrintWriter(socket.getOutputStream(), true);
 
-                // B1: Client gửi username ngay khi kết nối
+                //  Client gửi username ngay khi kết nối
                 username = in.readLine();
                 synchronized (clients) {
                     clients.put(username, out);
                 }
                 System.out.println(username + " đã tham gia.");
 
-                // B2: Lắng nghe tin nhắn dưới dạng: recipient:message
+                //  Lắng nghe tin nhắn dưới dạng: recipient:message
                 String input;
                 while ((input = in.readLine()) != null) {
                     String[] parts = input.split(":", 2);
