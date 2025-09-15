@@ -32,7 +32,7 @@ Giao thức TCP (Transmission Control Protocol): TCP là giao thức truyền t�
 
 ## 📝 3. Hình ảnh chức năng
 
-## 5. Các bước cài đặt
+## 4. Các bước cài đặt
 ### 1. Bước 1:
 ### 2. Bước 2:
 ### 3. Bước 3:
