@@ -30,9 +30,13 @@ Mô hình Client-Server: Đây là mô hình kiến trúc mạng cơ bản, tron
 
 Giao thức TCP (Transmission Control Protocol): TCP là giao thức truyền tải đáng tin cậy, có định hướng kết nối. Nó đảm bảo các gói dữ liệu được gửi đi sẽ đến nơi mà không bị mất, trùng lặp hay sai thứ tự. Việc sử dụng TCP rất phù hợp cho một ứng dụng chat, nơi tính toàn vẹn và thứ tự của tin nhắn là yếu tố quan trọng.
 
-## 📝 3. Hình ảnh chức năng
+## 3. Các chức năng trong ứng dụng.
+- Hiện thị trạng thái hoạt động của user.
+- Hiện thị trạng thái tin nhắn ( Đã xem, đã nhận).
+## 📝 4. Hình ảnh chức năng.
 
-## 4. Các bước cài đặt
+
+## 5. Các bước cài đặt
 ### 1. Bước 1:
 ### 2. Bước 2:
 ### 3. Bước 3:
