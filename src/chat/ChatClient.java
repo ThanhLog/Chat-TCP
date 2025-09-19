@@ -5,6 +5,7 @@ import java.net.*;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
+import java.util.*;
 
 public class ChatClient {
     private static final String SERVER_IP = "localhost";
@@ -12,38 +13,56 @@ public class ChatClient {
     private Socket socket;
     private BufferedReader in;
     private PrintWriter out;
+
     private JFrame frame;
-    private JTextArea textArea;
-    private JTextField textField;
-    private JTextField recipientField;
+    private JTextArea chatArea;
+    private JTextField messageField;
+    private DefaultListModel<String> userListModel;
+    private JList<String> userList;
+
     private String username;
+    private String currentRecipient = "";
 
     public ChatClient(String username) {
         this.username = username;
-        frame = new JFrame("Chat Client - " + username);
-        textArea = new JTextArea(20, 50);
-        textArea.setEditable(false);
-        textField = new JTextField(40);
-        recipientField = new JTextField(10);
+        createUI();
+    }
 
-        JPanel panel = new JPanel();
-        panel.add(new JLabel("To:"));
-        panel.add(recipientField);
-        panel.add(textField);
-
-        frame.getContentPane().add(new JScrollPane(textArea), BorderLayout.CENTER);
-        frame.getContentPane().add(panel, BorderLayout.SOUTH);
-        frame.pack();
+    private void createUI() {
+        frame = new JFrame("Messenger - " + username);
+        frame.setSize(600, 400);
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setLayout(new BorderLayout());
 
-        textField.addActionListener(e -> {
-            String recipient = recipientField.getText().trim();
-            String message = textField.getText().trim();
-            if (!recipient.isEmpty() && !message.isEmpty()) {
-                out.println(recipient + ":" + message);
-                textField.setText("");
-            }
+        // Panel trái: danh sách user
+        userListModel = new DefaultListModel<>();
+        userList = new JList<>(userListModel);
+        userList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        userList.addListSelectionListener(e -> {
+            currentRecipient = userList.getSelectedValue();
+            chatArea.append("Đang chat với: " + currentRecipient + "\n");
         });
+
+        // Khu chat chính
+        chatArea = new JTextArea();
+        chatArea.setEditable(false);
+        JScrollPane chatScroll = new JScrollPane(chatArea);
+
+        // Ô nhập tin nhắn
+        messageField = new JTextField();
+        messageField.addActionListener(e -> sendMessage());
+
+        frame.add(new JScrollPane(userList), BorderLayout.WEST);
+        frame.add(chatScroll, BorderLayout.CENTER);
+        frame.add(messageField, BorderLayout.SOUTH);
+    }
+
+    private void sendMessage() {
+        String message = messageField.getText().trim();
+        if (!message.isEmpty() && !currentRecipient.isEmpty()) {
+            out.println("CHAT|" + username + "|" + currentRecipient + "|" + message);
+            messageField.setText("");
+        }
     }
 
     public void start() throws IOException {
@@ -51,15 +70,15 @@ public class ChatClient {
         in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
         out = new PrintWriter(socket.getOutputStream(), true);
 
-        // Gửi username đến server ngay khi kết nối
+        // Gửi username
         out.println(username);
 
-        // Luồng nhận tin nhắn
+        // Thread nhận tin nhắn
         new Thread(() -> {
             try {
-                String message;
-                while ((message = in.readLine()) != null) {
-                    textArea.append(message + "\n");
+                String line;
+                while ((line = in.readLine()) != null) {
+                    processMessage(line);
                 }
             } catch (IOException e) {
                 e.printStackTrace();
@@ -67,6 +86,40 @@ public class ChatClient {
         }).start();
 
         frame.setVisible(true);
+    }
+
+    private void processMessage(String line) {
+        String[] parts = line.split("\\|", 4);
+        if (parts.length < 4) return;
+        String type = parts[0];
+        String sender = parts[1];
+        String recipient = parts[2];
+        String content = parts[3];
+
+        switch (type) {
+            case "CHAT":
+                chatArea.append(sender + ": " + content + "\n");
+                // gửi seen
+                out.println("SEEN|" + username + "|" + sender + "|Đã xem");
+                break;
+            case "SEEN":
+                chatArea.append("(Tin nhắn đã xem bởi " + sender + ")\n");
+                break;
+            case "USER_LIST":
+                SwingUtilities.invokeLater(() -> {
+                    userListModel.clear();
+                    for (String user : content.split(";")) {
+                        if (!user.isEmpty() && !user.equals(username)) {
+                            userListModel.addElement(user);
+                        }
+                    }
+                });
+                break;
+            case "STATUS":
+                // Cập nhật trạng thái user trong danh sách
+                // Có thể tô màu Online/Offline nếu muốn
+                break;
+        }
     }
 
     public static void main(String[] args) throws IOException {
