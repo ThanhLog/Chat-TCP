@@ -3,29 +3,30 @@ package chat;
 import java.io.*;
 import java.net.*;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class ChatServer {
-    private static final int PORT = 12345;
-    private static Map<String, PrintWriter> clients = new HashMap<>();
-    private static Map<String, Boolean> userStatus = new HashMap<>();
+    private static final int PORT = 12354;
+    private static Map<String, ClientHandler> clients = new ConcurrentHashMap<>();
+    private static Map<String, Set<String>> rooms = new ConcurrentHashMap<>();
 
     public static void main(String[] args) {
-        System.out.println("Chat Server chạy trên cổng " + PORT);
-
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
+            System.out.println("✅ ChatServer started on port " + PORT);
+
             while (true) {
-                Socket clientSocket = serverSocket.accept();
-                new ClientHandler(clientSocket).start();
+                Socket socket = serverSocket.accept();
+                new ClientHandler(socket).start();
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            System.err.println("❌ Error in ChatServer: " + e.getMessage());
         }
     }
 
-    private static class ClientHandler extends Thread {
+    static class ClientHandler extends Thread {
         private Socket socket;
-        private PrintWriter out;
         private BufferedReader in;
+        private PrintWriter out;
         private String username;
 
         public ClientHandler(Socket socket) {
@@ -37,84 +38,87 @@ public class ChatServer {
                 in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                 out = new PrintWriter(socket.getOutputStream(), true);
 
-                // Lấy username từ client
+                // Nhận username từ client
                 username = in.readLine();
-                synchronized (clients) {
-                    clients.put(username, out);
-                    userStatus.put(username, true);
+                if (username == null || username.trim().isEmpty()) {
+                    socket.close();
+                    return;
                 }
 
+                clients.put(username, this);
                 sendUserList();
-                broadcastStatus();
+                broadcast("SERVER", username + " đã online");
 
-                // Lắng nghe tin nhắn
-                String input;
-                while ((input = in.readLine()) != null) {
-                    processMessage(input);
+                String message;
+                while ((message = in.readLine()) != null) {
+                    if (message.startsWith("CREATE_ROOM:")) {
+                        handleCreateRoom(message);
+                    } else if (message.startsWith("SEND_ROOM:")) {
+                        handleSendRoom(message);
+                    } else if ("GET_USERS".equalsIgnoreCase(message)) {
+                        sendUserList();
+                    }
                 }
             } catch (IOException e) {
-                System.out.println("Client " + username + " ngắt kết nối.");
+                System.out.println("❌ Mất kết nối với " + username);
             } finally {
-                try { socket.close(); } catch (IOException e) {}
-                synchronized (clients) {
+                if (username != null) {
                     clients.remove(username);
-                    userStatus.put(username, false);
+                    broadcast("SERVER", username + " đã offline");
                 }
-                sendUserList();
-                broadcastStatus();
+                try { socket.close(); } catch (IOException ignored) {}
             }
         }
 
-        private void processMessage(String input) {
-            String[] parts = input.split("\\|", 4);
-            if (parts.length < 4) return;
-            String type = parts[0];
-            String sender = parts[1];
-            String recipient = parts[2];
-            String content = parts[3];
+        private void handleCreateRoom(String message) {
+            // CREATE_ROOM:user1,user2
+            String[] parts = message.split(":", 2);
+            if (parts.length < 2) return;
 
-            switch (type) {
-                case "CHAT":
-                    sendMessage(recipient, "CHAT|" + sender + "|" + recipient + "|" + content);
-                    break;
-                case "SEEN":
-                    sendMessage(recipient, "SEEN|" + sender + "|" + recipient + "|" + content);
-                    break;
+            String[] users = parts[1].split(",");
+            String roomId = "ROOM_" + System.currentTimeMillis();
+            Set<String> roomUsers = new HashSet<>(Arrays.asList(users));
+
+            rooms.put(roomId, roomUsers);
+            out.println("SERVER: Room created with ID " + roomId);
+        }
+
+        private void handleSendRoom(String message) {
+            // SEND_ROOM:roomId:message
+            String[] parts = message.split(":", 3);
+            if (parts.length < 3) return;
+
+            String roomId = parts[1];
+            String msg = parts[2];
+
+            Set<String> roomUsers = rooms.get(roomId);
+            if (roomUsers != null) {
+                for (String user : roomUsers) {
+                    ClientHandler client = clients.get(user);
+                    if (client != null) {
+                        client.out.println("[" + roomId + "] " + username + ": " + msg);
+                    }
+                }
+            } else {
+                out.println("SERVER: Room " + roomId + " không tồn tại!");
             }
         }
 
-        private void sendMessage(String recipient, String message) {
-            synchronized (clients) {
-                PrintWriter writer = clients.get(recipient);
-                if (writer != null) {
-                    writer.println(message);
-                }
-            }
-        }
-
-        private void broadcastStatus() {
-            synchronized (clients) {
-                StringBuilder sb = new StringBuilder("STATUS|Server|ALL|");
-                for (Map.Entry<String, Boolean> entry : userStatus.entrySet()) {
-                    sb.append(entry.getKey()).append("=")
-                      .append(entry.getValue() ? "Online" : "Offline").append(";");
-                }
-                for (PrintWriter writer : clients.values()) {
-                    writer.println(sb.toString());
-                }
+        private void broadcast(String sender, String message) {
+            for (ClientHandler client : clients.values()) {
+                client.out.println(sender + ": " + message);
             }
         }
 
         private void sendUserList() {
-            synchronized (clients) {
-                StringBuilder sb = new StringBuilder("USER_LIST|Server|ALL|");
-                for (String user : clients.keySet()) {
-                    sb.append(user).append(";");
-                }
-                for (PrintWriter writer : clients.values()) {
-                    writer.println(sb.toString());
-                }
+            StringBuilder userList = new StringBuilder("USER_LIST:");
+            for (String user : clients.keySet()) {
+                userList.append(user).append(",");
             }
+            if (userList.length() > 10) {
+                userList.setLength(userList.length() - 1);
+            }
+            out.println(userList);
         }
     }
 }

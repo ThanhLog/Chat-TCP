@@ -1,129 +1,116 @@
 package chat;
 
-import java.io.*;
-import java.net.*;
+import mongodb.MongoDBUtil;
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.*;
-import java.util.*;
+import java.io.*;
+import java.net.Socket;
+import java.util.List;
 
-public class ChatClient {
-    private static final String SERVER_IP = "localhost";
-    private static final int SERVER_PORT = 12345;
-    private Socket socket;
-    private BufferedReader in;
-    private PrintWriter out;
-
-    private JFrame frame;
-    private JTextArea chatArea;
-    private JTextField messageField;
-    private DefaultListModel<String> userListModel;
-    private JList<String> userList;
-
+public class ChatClient extends JFrame {
     private String username;
-    private String currentRecipient = "";
+    private Socket socket;
+    private PrintWriter out;
+    private JTextArea messageArea;
+    private JList<String> userList;
+    private List<String> originalUsers; // Lưu danh sách user gốc
 
     public ChatClient(String username) {
         this.username = username;
-        createUI();
-    }
+        setTitle("Chat 1-1 - " + username);
+        setSize(800, 600);
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setLocationRelativeTo(null);
 
-    private void createUI() {
-        frame = new JFrame("Messenger - " + username);
-        frame.setSize(600, 400);
-        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setLayout(new BorderLayout());
+        // ==== Khởi tạo UI trước ====
+        messageArea = new JTextArea();
+        messageArea.setEditable(false);
 
-        // Panel trái: danh sách user
-        userListModel = new DefaultListModel<>();
-        userList = new JList<>(userListModel);
-        userList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        userList.addListSelectionListener(e -> {
-            currentRecipient = userList.getSelectedValue();
-            chatArea.append("Đang chat với: " + currentRecipient + "\n");
+        originalUsers = MongoDBUtil.getListUserByUsername(username);
+        if (originalUsers.isEmpty()) {
+            originalUsers.add("⚠️ Không có người dùng nào trong listUser");
+        }
+        userList = new JList<>(originalUsers.toArray(new String[0]));
+
+        // Thêm ô search
+        JTextField searchField = new JTextField();
+        JButton searchButton = new JButton("Tìm");
+
+        JPanel searchPanel = new JPanel(new BorderLayout());
+        searchPanel.add(searchField, BorderLayout.CENTER);
+        searchPanel.add(searchButton, BorderLayout.EAST);
+
+        // Left panel
+        JPanel leftPanel = new JPanel(new BorderLayout());
+        leftPanel.add(searchPanel, BorderLayout.NORTH);
+        leftPanel.add(new JScrollPane(userList), BorderLayout.CENTER);
+
+        // Right panel
+        JPanel rightPanel = new JPanel(new BorderLayout());
+        rightPanel.add(new JScrollPane(messageArea), BorderLayout.CENTER);
+
+        JTextField messageField = new JTextField();
+        JButton sendButton = new JButton("Gửi");
+        JPanel sendPanel = new JPanel(new BorderLayout());
+        sendPanel.add(messageField, BorderLayout.CENTER);
+        sendPanel.add(sendButton, BorderLayout.EAST);
+        rightPanel.add(sendPanel, BorderLayout.SOUTH);
+
+        // Split panel
+        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftPanel, rightPanel);
+        splitPane.setDividerLocation(200);
+        add(splitPane);
+
+        // ==== Kết nối server sau khi UI đã xong ====
+        try {
+            socket = new Socket("localhost", 12354);
+            out = new PrintWriter(socket.getOutputStream(), true);
+            out.println(username);
+
+            new Thread(() -> listenServer()).start();
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(this, "Không kết nối được ChatServer!");
+        }
+
+        // Xử lý gửi tin nhắn
+        sendButton.addActionListener(e -> {
+            String recipient = userList.getSelectedValue();
+            String msg = messageField.getText();
+            if (recipient != null && !msg.isEmpty()) {
+                out.println(recipient + "|" + msg);
+                messageArea.append("Tôi: " + msg + "\n");
+                messageField.setText("");
+            }
         });
 
-        // Khu chat chính
-        chatArea = new JTextArea();
-        chatArea.setEditable(false);
-        JScrollPane chatScroll = new JScrollPane(chatArea);
-
-        // Ô nhập tin nhắn
-        messageField = new JTextField();
-        messageField.addActionListener(e -> sendMessage());
-
-        frame.add(new JScrollPane(userList), BorderLayout.WEST);
-        frame.add(chatScroll, BorderLayout.CENTER);
-        frame.add(messageField, BorderLayout.SOUTH);
-    }
-
-    private void sendMessage() {
-        String message = messageField.getText().trim();
-        if (!message.isEmpty() && !currentRecipient.isEmpty()) {
-            out.println("CHAT|" + username + "|" + currentRecipient + "|" + message);
-            messageField.setText("");
-        }
-    }
-
-    public void start() throws IOException {
-        socket = new Socket(SERVER_IP, SERVER_PORT);
-        in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-        out = new PrintWriter(socket.getOutputStream(), true);
-
-        // Gửi username
-        out.println(username);
-
-        // Thread nhận tin nhắn
-        new Thread(() -> {
-            try {
-                String line;
-                while ((line = in.readLine()) != null) {
-                    processMessage(line);
+        // Xử lý tìm kiếm user
+        searchButton.addActionListener(e -> {
+            String keyword = searchField.getText().trim();
+            if (!keyword.isEmpty()) {
+                List<String> foundUsers = MongoDBUtil.searchUsers(keyword);
+                if (foundUsers.isEmpty()) {
+                    foundUsers.add("❌ Không tìm thấy user");
                 }
-            } catch (IOException e) {
-                e.printStackTrace();
+                userList.setListData(foundUsers.toArray(new String[0]));
+            } else {
+                // Nếu ô tìm kiếm trống => hiển thị lại danh sách gốc
+                userList.setListData(originalUsers.toArray(new String[0]));
             }
-        }).start();
+        });
 
-        frame.setVisible(true);
+        setVisible(true);
     }
 
-    private void processMessage(String line) {
-        String[] parts = line.split("\\|", 4);
-        if (parts.length < 4) return;
-        String type = parts[0];
-        String sender = parts[1];
-        String recipient = parts[2];
-        String content = parts[3];
-
-        switch (type) {
-            case "CHAT":
-                chatArea.append(sender + ": " + content + "\n");
-                // gửi seen
-                out.println("SEEN|" + username + "|" + sender + "|Đã xem");
-                break;
-            case "SEEN":
-                chatArea.append("(Tin nhắn đã xem bởi " + sender + ")\n");
-                break;
-            case "USER_LIST":
-                SwingUtilities.invokeLater(() -> {
-                    userListModel.clear();
-                    for (String user : content.split(";")) {
-                        if (!user.isEmpty() && !user.equals(username)) {
-                            userListModel.addElement(user);
-                        }
-                    }
-                });
-                break;
-            case "STATUS":
-                // Cập nhật trạng thái user trong danh sách
-                // Có thể tô màu Online/Offline nếu muốn
-                break;
+    // Lắng nghe tin nhắn từ server
+    private void listenServer() {
+        try (BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
+            String msg;
+            while ((msg = in.readLine()) != null) {
+                String finalMsg = msg;
+                SwingUtilities.invokeLater(() -> messageArea.append(finalMsg + "\n"));
+            }
+        } catch (IOException e) {
+            SwingUtilities.invokeLater(() -> messageArea.append("Mất kết nối server\n"));
         }
-    }
-
-    public static void main(String[] args) throws IOException {
-        String username = JOptionPane.showInputDialog("Nhập tên của bạn:");
-        new ChatClient(username).start();
     }
 }
