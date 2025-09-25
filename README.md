@@ -37,8 +37,8 @@ Giao thức TCP (Transmission Control Protocol): TCP là giao thức truyền t�
 
 ## 3. Các chức năng trong ứng dụng.
 
-- Hiện thị trạng thái hoạt động của user.
-- Hiện thị trạng thái tin nhắn ( Đã xem, đã nhận).
+- Hiện thị danh sách user online.
+- Hiện thị trạng thái tin nhắn ( Đã xem, đã nhận). ( Đang phát triển )
 - Đăng nhập, đăng ký vào hệ thống
 
 ## 📝 4. Hình ảnh chức năng.
