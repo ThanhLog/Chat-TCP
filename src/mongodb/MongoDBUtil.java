@@ -1,91 +1,122 @@
 package mongodb;
 
 import com.mongodb.client.*;
-import com.mongodb.client.model.*;
-import java.util.*;
+import com.mongodb.client.model.Filters;
+import com.mongodb.client.model.Updates;
+
 import org.bson.Document;
 
+import java.time.Instant;
+import java.util.*;
 
 public class MongoDBUtil {
-    private static final String URI_STRING = "mongodb://localhost:27017";
-    private static final String DATA_NAME = "chatDB";
-    
-    private static MongoClient client;
-    private static MongoDatabase database;
-    
-    static {
-        client = MongoClients.create(URI_STRING);
-        database = client.getDatabase(DATA_NAME);
+    private static final String URI = "mongodb://localhost:27017";
+    private static final String DB_NAME = "chatDB";
+
+    private static MongoClient client = null;
+    private static MongoDatabase db = null;
+
+    public static synchronized void connect() {
+        if (client == null) {
+            client = MongoClients.create(URI);
+            db = client.getDatabase(DB_NAME);
+            // ensure collections exist
+            var names = new HashSet<String>();
+            db.listCollectionNames().into(new ArrayList<>()).forEach(names::add);
+            if (!names.contains("users")) db.createCollection("users");
+            if (!names.contains("chat_rooms")) db.createCollection("chat_rooms");
+            System.out.println("MongoDB connected -> " + DB_NAME);
+        }
     }
-    
-    public static MongoDatabase getDatabase() {
-        return database;
+
+    public static synchronized MongoDatabase getDatabase() {
+        if (db == null) connect();
+        return db;
+    }
+
+    public static synchronized void close() {
+        if (client != null) {
+            client.close();
+            client = null;
+            db = null;
+            System.out.println("MongoDB closed");
+        }
+    }
+
+    // --- user methods ---
+    public static boolean registerUser(String username, String password) {
+        var users = getDatabase().getCollection("users");
+        Document existing = users.find(Filters.eq("username", username)).first();
+        if (existing != null) return false;
+        Document doc = new Document("username", username)
+                .append("password", password);
+        users.insertOne(doc);
+        return true;
+    }
+
+    public static boolean loginUser(String username, String password) {
+        var users = getDatabase().getCollection("users");
+        Document doc = users.find(Filters.and(Filters.eq("username", username), Filters.eq("password", password))).first();
+        return doc != null;
     }
 
     public static List<String> getAllUsers() {
-        List<String> users = new ArrayList<>();
-        MongoCollection<Document> collection = database.getCollection("users");
-        for (Document doc : collection.find()) {
-            users.add(doc.getString("username"));
-        }
-        return users;
-    }
-    
-    public static List<String> getListUserByUsername(String username) {
-        List<String> list = new ArrayList<>();
-        try {
-            MongoCollection<Document> collection = database.getCollection("users");
-            Document userDoc = collection.find(Filters.eq("username", username)).first();
-
-            if (userDoc != null) {
-                List<Document> userChats = userDoc.getList("listUser", Document.class);
-                if (userChats != null) {
-                    for (Document doc : userChats) {
-                        list.add(doc.getString("username"));
-                    }
-                }
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return list;
-    }
-    
-    public static List<String> searchUsers(String keyword) {
-        List<String> result = new ArrayList<>();
-        try {
-            MongoCollection<Document> collection = database.getCollection("users");
-            FindIterable<Document> docs = collection.find(Filters.regex("username", ".*" + keyword + ".*", "i"));
-            for (Document doc : docs) {
-                result.add(doc.getString("username"));
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return result;
+        var users = getDatabase().getCollection("users");
+        List<String> res = new ArrayList<>();
+        for (Document d : users.find()) res.add(d.getString("username"));
+        return res;
     }
 
-    public static String createRoomIfNotExists(String userA, String userB) {
-        MongoCollection<Document> collection = database.getCollection("chat_rooms");
+    public static List<String> searchUsers(String kw) {
+        var users = getDatabase().getCollection("users");
+        List<String> res = new ArrayList<>();
+        var iter = users.find(org.bson.conversions.Bson.class.cast(com.mongodb.client.model.Filters.regex("username", ".*" + kw + ".*", "i"))).iterator();
+        try (iter) { while (iter.hasNext()) res.add(iter.next().getString("username")); }
+        return res;
+    }
 
-        // Tạo key duy nhất cho 2 user, sắp xếp alphabet để không bị trùng
-        List<String> users = Arrays.asList(userA, userB);
-        Collections.sort(users);
-        String roomId = users.get(0) + "_" + users.get(1);
-
-        // Kiểm tra room đã tồn tại chưa
-        Document existingRoom = collection.find(Filters.eq("_id", roomId)).first();
-        if (existingRoom == null) {
-            Document newRoom = new Document("_id", roomId)
-                    .append("users", users)
+    // --- room & messages ---
+    // deterministic room id for pair (alphabetical)
+    public static String createRoomIfNotExists(String a, String b) {
+        List<String> u = Arrays.asList(a, b);
+        Collections.sort(u);
+        String roomId = u.get(0) + "_" + u.get(1);
+        var coll = getDatabase().getCollection("chat_rooms");
+        Document existing = coll.find(Filters.eq("_id", roomId)).first();
+        if (existing == null) {
+            Document doc = new Document("_id", roomId)
+                    .append("users", u)
                     .append("messages", new ArrayList<Document>());
-            collection.insertOne(newRoom);
+            coll.insertOne(doc);
         }
         return roomId;
     }
 
-    
-    public static void close() {
-        client.close();
+    public static void saveMessage(String roomId, String sender, String base64Content, String send) {
+        var coll = getDatabase().getCollection("chat_rooms");
+        String now = Instant.now().toString();
+        Document msg = new Document("username", sender)
+                .append("message", base64Content)
+                .append("createAt", now)
+        		.append("send", send);
+        Document room = coll.find(Filters.eq("_id", roomId)).first();
+        if (room == null) {
+            // create minimal room if missing
+            Document newRoom = new Document("_id", roomId)
+                    .append("users", Arrays.asList("unknownA", "unknownB"))
+                    .append("messages", Arrays.asList(msg));
+            coll.insertOne(newRoom);
+        } else {
+            coll.updateOne(Filters.eq("_id", roomId), Updates.push("messages", msg));
+        }
+    }
+
+    public static List<Document> getMessages(String roomId) {
+        var coll = getDatabase().getCollection("chat_rooms");
+        Document room = coll.find(Filters.eq("_id", roomId)).first();
+        if (room == null) return Collections.emptyList();
+        List<Document> msgs = room.getList("messages", Document.class);
+        if (msgs == null) return Collections.emptyList();
+        return msgs;
     }
 }

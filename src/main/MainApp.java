@@ -1,39 +1,30 @@
 package main;
 
 import authencation.AuthServer;
-import chat.ChatServer;
 import authencation.LoginClient;
+import chat.ChatServer;
+import mongodb.MongoDBUtil;
 
 public class MainApp {
     public static void main(String[] args) {
-        // Khởi chạy AuthServer trong thread riêng
-        Thread authThread = new Thread(() -> {
-            try {
-                AuthServer.main(null);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        });
-        authThread.start();
+        // ensure Mongo connected early
+        MongoDBUtil.connect();
 
-        // Khởi chạy ChatServer trong thread riêng
-        Thread chatThread = new Thread(() -> {
-            try {
-                ChatServer.main(null);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        });
-        chatThread.start();
+        // start AuthServer
+        new Thread(() -> AuthServer.main(null)).start();
+        // start ChatServer
+        new Thread(() -> ChatServer.main(null)).start();
 
-        // Chạy LoginClient với giao diện Swing
+        // Shutdown hook to close resources
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            System.out.println("Shutdown: closing MongoDB");
+            MongoDBUtil.close();
+        }));
+
+        // show login UI (on EDT)
         javax.swing.SwingUtilities.invokeLater(() -> {
-            try {
-                LoginClient login = new LoginClient();
-                login.setVisible(true);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+            LoginClient login = new LoginClient();
+            login.setVisible(true);
         });
     }
 }

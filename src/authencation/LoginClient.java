@@ -1,91 +1,114 @@
 package authencation;
 
 import javax.swing.*;
-
-import chat.ChatClient;
-
 import java.awt.*;
+import java.io.*;
+import java.net.Socket;
 
 public class LoginClient extends JFrame {
-    private JTextField usernameField;
-    private JPasswordField passwordField;
-    private AuthClientUtil authClient;
+    private JTextField userField;
+    private JPasswordField passField;
 
     public LoginClient() {
-        authClient = new AuthClientUtil("localhost", 12345);
-
-        setTitle("Đăng nhập");
-        setSize(400, 300);
+        super("Đăng nhập / Đăng ký");
+        setSize(400, 250);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
-        setLayout(new GridBagLayout());
-        getContentPane().setBackground(new Color(244, 246, 249));
+        setResizable(false);
 
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.insets = new Insets(10, 10, 10, 10);
-        gbc.fill = GridBagConstraints.HORIZONTAL;
+        // Panel chính
+        JPanel mainPanel = new JPanel();
+        mainPanel.setLayout(new BoxLayout(mainPanel, BoxLayout.Y_AXIS));
+        mainPanel.setBorder(BorderFactory.createEmptyBorder(20, 40, 20, 40));
+        add(mainPanel);
 
-        JLabel titleLabel = new JLabel("Đăng nhập hệ thống", SwingConstants.CENTER);
-        titleLabel.setFont(new Font("Arial", Font.BOLD, 20));
-        titleLabel.setForeground(new Color(51, 51, 51));
+        // Tiêu đề
+        JLabel title = new JLabel("Welcome to Chat App", SwingConstants.CENTER);
+        title.setFont(new Font("Arial", Font.BOLD, 20));
+        title.setAlignmentX(Component.CENTER_ALIGNMENT);
+        mainPanel.add(title);
+        mainPanel.add(Box.createVerticalStrut(20));
 
-        gbc.gridx = 0;
-        gbc.gridy = 0;
-        gbc.gridwidth = 2;
-        add(titleLabel, gbc);
+        // Username
+        userField = new JTextField();
+        styleTextField(userField, "Username");
+        mainPanel.add(userField);
+        mainPanel.add(Box.createVerticalStrut(10));
 
-        usernameField = new JTextField();
-        passwordField = new JPasswordField();
+        // Password
+        passField = new JPasswordField();
+        styleTextField(passField, "Password");
+        mainPanel.add(passField);
+        mainPanel.add(Box.createVerticalStrut(20));
 
-        gbc.gridy = 1;
-        gbc.gridwidth = 1;
-        add(new JLabel("Tên đăng nhập:"), gbc);
-        gbc.gridx = 1;
-        add(usernameField, gbc);
+        // Panel nút bấm
+        JPanel buttonPanel = new JPanel(new GridLayout(1, 2, 10, 0));
+        JButton btnLogin = new JButton("Login");
+        JButton btnReg = new JButton("Register");
+        styleButton(btnLogin, new Color(0, 153, 255));
+        styleButton(btnReg, new Color(0, 200, 100));
+        buttonPanel.add(btnLogin);
+        buttonPanel.add(btnReg);
+        mainPanel.add(buttonPanel);
 
-        gbc.gridx = 0;
-        gbc.gridy = 2;
-        add(new JLabel("Mật khẩu:"), gbc);
-        gbc.gridx = 1;
-        add(passwordField, gbc);
-
-        JButton loginBtn = createButton("Đăng nhập", new Color(76, 175, 80));
-        JButton registerBtn = createButton("Đăng ký", new Color(33, 150, 243));
-
-        gbc.gridx = 0;
-        gbc.gridy = 3;
-        add(loginBtn, gbc);
-        gbc.gridx = 1;
-        add(registerBtn, gbc);
-
-        loginBtn.addActionListener(e -> handleLogin());
-        registerBtn.addActionListener(e -> {
-            new RegisterClient().setVisible(true);
-            dispose();
-        });
+        // Sự kiện nút
+        btnReg.addActionListener(e -> doRegister());
+        btnLogin.addActionListener(e -> doLogin());
     }
 
-    private JButton createButton(String text, Color bgColor) {
-        JButton button = new JButton(text);
+    private void styleTextField(JTextField field, String placeholder) {
+        field.setMaximumSize(new Dimension(Integer.MAX_VALUE, 35));
+        field.setFont(new Font("Arial", Font.PLAIN, 14));
+        field.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(200, 200, 200)),
+                BorderFactory.createEmptyBorder(5, 10, 5, 10)
+        ));
+        field.setToolTipText(placeholder);
+    }
+
+    private void styleButton(JButton button, Color bgColor) {
         button.setBackground(bgColor);
         button.setForeground(Color.WHITE);
         button.setFocusPainted(false);
         button.setFont(new Font("Arial", Font.BOLD, 14));
-        button.setBorder(BorderFactory.createEmptyBorder(8, 20, 8, 20));
-        return button;
+        button.setOpaque(true);
+        button.setBorderPainted(false);
+        button.setPreferredSize(new Dimension(100, 35));
     }
 
-    private void handleLogin() {
-        String username = usernameField.getText();
-        String password = new String(passwordField.getPassword());
-        String response = authClient.sendRequest("LOGIN", username, password);
+    private void doRegister() {
+        String u = userField.getText().trim();
+        String p = new String(passField.getPassword());
+        if (u.isEmpty() || p.isEmpty()) { JOptionPane.showMessageDialog(this, "Vui lòng nhập đủ thông tin"); return; }
+        try (Socket s = new Socket("localhost", AuthServer.PORT);
+             PrintWriter out = new PrintWriter(new OutputStreamWriter(s.getOutputStream(), "UTF-8"), true);
+             BufferedReader in = new BufferedReader(new InputStreamReader(s.getInputStream(), "UTF-8"))) {
+            out.println("REGISTER:" + u + ":" + p);
+            String resp = in.readLine();
+            if ("REGISTER_OK".equals(resp)) JOptionPane.showMessageDialog(this, "Đăng ký thành công");
+            else JOptionPane.showMessageDialog(this, "Đăng ký thất bại");
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, "Không kết nối AuthServer: " + ex.getMessage());
+        }
+    }
 
-        if ("LOGIN_SUCCESS".equals(response)) {
-            JOptionPane.showMessageDialog(this, "Đăng nhập thành công!");
-            new ChatClient(username);
-            dispose();
-        } else {
-            JOptionPane.showMessageDialog(this, "Sai tài khoản hoặc mật khẩu!");
+    private void doLogin() {
+        String u = userField.getText().trim();
+        String p = new String(passField.getPassword());
+        if (u.isEmpty() || p.isEmpty()) { JOptionPane.showMessageDialog(this, "Vui lòng nhập đủ thông tin"); return; }
+        try (Socket s = new Socket("localhost", AuthServer.PORT);
+             PrintWriter out = new PrintWriter(new OutputStreamWriter(s.getOutputStream(), "UTF-8"), true);
+             BufferedReader in = new BufferedReader(new InputStreamReader(s.getInputStream(), "UTF-8"))) {
+            out.println("LOGIN:" + u + ":" + p);
+            String resp = in.readLine();
+            if ("LOGIN_OK".equals(resp)) {
+                SwingUtilities.invokeLater(() -> {
+                    new chat.ChatClient(u).setVisible(true);
+                });
+                this.dispose();
+            } else JOptionPane.showMessageDialog(this, "Đăng nhập thất bại");
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, "Không kết nối AuthServer: " + ex.getMessage());
         }
     }
 

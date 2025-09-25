@@ -1,124 +1,231 @@
 package chat;
 
+import com.mongodb.client.model.Filters;
+import mongodb.MongoDBUtil;
+import org.bson.Document;
+
 import java.io.*;
-import java.net.*;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class ChatServer {
-    private static final int PORT = 12354;
-    private static Map<String, ClientHandler> clients = new ConcurrentHashMap<>();
-    private static Map<String, Set<String>> rooms = new ConcurrentHashMap<>();
+    public static final int PORT = 12354;
+    private static ServerSocket serverSocket;
+    private static final ConcurrentHashMap<String, ClientHandler> clients = new ConcurrentHashMap<>();
+    // cache room participants for quick broadcast
+    private static final ConcurrentHashMap<String, Set<String>> rooms = new ConcurrentHashMap<>();
 
     public static void main(String[] args) {
-        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
-            System.out.println("✅ ChatServer started on port " + PORT);
+        MongoDBUtil.connect();
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try { if (serverSocket != null && !serverSocket.isClosed()) serverSocket.close(); } catch (Exception ignored){}
+            MongoDBUtil.close();
+        }));
 
+        try {
+            serverSocket = new ServerSocket(PORT);
+            // keep a single startup message (not chat content)
+            System.out.println("ChatServer listening on " + PORT);
             while (true) {
-                Socket socket = serverSocket.accept();
-                new ClientHandler(socket).start();
+                Socket s = serverSocket.accept();
+                new Thread(new ClientHandler(s)).start();
             }
         } catch (IOException e) {
-            System.err.println("❌ Error in ChatServer: " + e.getMessage());
+            System.err.println("ChatServer stopped: " + e.getMessage());
         }
     }
 
-    static class ClientHandler extends Thread {
-        private Socket socket;
+    static class ClientHandler implements Runnable {
+        private final Socket socket;
         private BufferedReader in;
         private PrintWriter out;
         private String username;
 
-        public ClientHandler(Socket socket) {
-            this.socket = socket;
+        ClientHandler(Socket socket) { this.socket = socket; }
+
+        /**
+         * Safe send: kiểm tra out != null, bọc try/catch để tránh crash nếu client đã disconnect.
+         */
+        private void sendLine(String line) {
+            try {
+                PrintWriter w = out; // local ref
+                if (w != null) {
+                    synchronized (w) { w.println(line); }
+                }
+            } catch (Exception ignored) {
+                // swallow: nếu gửi thất bại thì không in message ra console (theo yêu cầu)
+            }
         }
 
+        @Override
         public void run() {
             try {
-                in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                out = new PrintWriter(socket.getOutputStream(), true);
-
-                // Nhận username từ client
+                in = new BufferedReader(new InputStreamReader(socket.getInputStream(), "UTF-8"));
+                out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), "UTF-8"), true);
                 username = in.readLine();
-                if (username == null || username.trim().isEmpty()) {
-                    socket.close();
-                    return;
-                }
-
+                if (username == null || username.trim().isEmpty()) { closeSocket(); return; }
+                username = username.trim();
                 clients.put(username, this);
-                sendUserList();
-                broadcast("SERVER", username + " đã online");
+                broadcastUserList(); // notify all clients of user list
 
-                String message;
-                while ((message = in.readLine()) != null) {
-                    if (message.startsWith("CREATE_ROOM:")) {
-                        handleCreateRoom(message);
-                    } else if (message.startsWith("SEND_ROOM:")) {
-                        handleSendRoom(message);
-                    } else if ("GET_USERS".equalsIgnoreCase(message)) {
-                        sendUserList();
-                    }
+                String line;
+                while ((line = in.readLine()) != null) {
+                    if (line.startsWith("CREATE_OR_GET_ROOM:")) handleCreateRoom(line);
+                    else if (line.startsWith("GET_MESSAGES:")) handleGetMessages(line);
+                    else if (line.startsWith("SEND:")) handleSend(line);
+                    else if (line.equalsIgnoreCase("GET_USERS")) sendUserList();
+                    // unknown commands are ignored silently
                 }
             } catch (IOException e) {
-                System.out.println("❌ Mất kết nối với " + username);
+                // connection lost or IO error; do not print chat contents
             } finally {
-                if (username != null) {
-                    clients.remove(username);
-                    broadcast("SERVER", username + " đã offline");
-                }
-                try { socket.close(); } catch (IOException ignored) {}
+                cleanup();
             }
         }
 
-        private void handleCreateRoom(String message) {
-            // CREATE_ROOM:user1,user2
-            String[] parts = message.split(":", 2);
-            if (parts.length < 2) return;
+        private void handleCreateRoom(String line) {
+            try {
+                String[] parts = line.split(":", 2);
+                if (parts.length < 2) return;
+                String[] users = parts[1].split(",", 2);
+                if (users.length < 2) return;
+                String a = users[0].trim(), b = users[1].trim();
+                if (a.isEmpty() || b.isEmpty()) return;
 
-            String[] users = parts[1].split(",");
-            String roomId = "ROOM_" + System.currentTimeMillis();
-            Set<String> roomUsers = new HashSet<>(Arrays.asList(users));
+                String roomId = MongoDBUtil.createRoomIfNotExists(a, b);
 
-            rooms.put(roomId, roomUsers);
-            out.println("SERVER: Room created with ID " + roomId);
+                // update cache of participants (synchronized via compute)
+                Document roomDoc = MongoDBUtil.getDatabase().getCollection("chat_rooms")
+                        .find(Filters.eq("_id", roomId)).first();
+                if (roomDoc != null) {
+                    List<String> us = roomDoc.getList("users", String.class);
+                    rooms.put(roomId, new HashSet<>(us != null ? us : Collections.emptyList()));
+                }
+
+                // send back room id (client will request messages)
+                sendLine("ROOM_ID:" + roomId);
+            } catch (Exception e) {
+                // don't expose internal errors to clients; simply send a generic error
+                sendLine("ERROR:CREATE_ROOM");
+            }
         }
 
-        private void handleSendRoom(String message) {
-            // SEND_ROOM:roomId:message
-            String[] parts = message.split(":", 3);
-            if (parts.length < 3) return;
+        private void handleGetMessages(String line) {
+            try {
+                String[] parts = line.split(":", 2);
+                if (parts.length < 2) return;
+                String roomId = parts[1].trim();
+                if (roomId.isEmpty()) return;
 
-            String roomId = parts[1];
-            String msg = parts[2];
+                List<Document> msgs = MongoDBUtil.getMessages(roomId);
+                for (Document m : msgs) {
+                    String sender = safeGetString(m, "username");
+                    String content = safeGetString(m, "message"); // base64 stored
+                    String createAt = safeGetString(m, "createAt");
+                    sendLine("MSG:" + roomId + ":" + sender + ":" + content + ":" + createAt);
+                }
+                sendLine("END_MESSAGES");
+            } catch (Exception e) {
+                sendLine("ERROR:GET_MESSAGES");
+            }
+        }
 
-            Set<String> roomUsers = rooms.get(roomId);
-            if (roomUsers != null) {
-                for (String user : roomUsers) {
-                    ClientHandler client = clients.get(user);
-                    if (client != null) {
-                        client.out.println("[" + roomId + "] " + username + ": " + msg);
+        private void handleSend(String line) {
+            try {
+                String[] parts = line.split(":", 3);
+                if (parts.length < 3) return;
+                String roomId = parts[1].trim();
+                String base64 = parts[2];
+                if (roomId.isEmpty() || base64 == null) return;
+
+                // save to DB (store base64 as-is)
+                MongoDBUtil.saveMessage(roomId, username, base64, "SEND");
+
+                // ensure room participants cached (thread-safe computeIfAbsent)
+                rooms.computeIfAbsent(roomId, r -> {
+                    Document doc = MongoDBUtil.getDatabase().getCollection("chat_rooms")
+                            .find(Filters.eq("_id", r)).first();
+                    if (doc != null) {
+                        List<String> us = doc.getList("users", String.class);
+                        return new HashSet<>(us != null ? us : Collections.emptyList());
+                    }
+                    return new HashSet<>();
+                });
+
+                String createAt = Instant.now().toString();
+                Set<String> participants = rooms.getOrDefault(roomId, Collections.emptySet());
+
+                // Broadcast only to participants that are currently online
+                for (String user : participants) {
+                    ClientHandler ch = clients.get(user);
+                    if (ch != null) {
+                        ch.sendLine("MSG:" + roomId + ":" + username + ":" + base64 + ":" + createAt);
                     }
                 }
-            } else {
-                out.println("SERVER: Room " + roomId + " không tồn tại!");
-            }
-        }
-
-        private void broadcast(String sender, String message) {
-            for (ClientHandler client : clients.values()) {
-                client.out.println(sender + ": " + message);
+                // Server intentionally does NOT print message contents to console.
+            } catch (Exception e) {
+                sendLine("ERROR:SEND");
             }
         }
 
         private void sendUserList() {
-            StringBuilder userList = new StringBuilder("USER_LIST:");
-            for (String user : clients.keySet()) {
-                userList.append(user).append(",");
+            StringBuilder sb = new StringBuilder("USER_LIST:");
+            boolean first = true;
+            for (String u : clients.keySet()) {
+                if (!u.equals(username)) {
+                    if (!first) sb.append(",");
+                    sb.append(u);
+                    first = false;
+                }
             }
-            if (userList.length() > 10) {
-                userList.setLength(userList.length() - 1);
+            sendLine(sb.toString());
+        }
+
+        private void broadcastUserList() {
+            StringBuilder sb = new StringBuilder("USER_LIST:");
+            boolean first = true;
+            for (String u : clients.keySet()) {
+                if (!first) sb.append(",");
+                sb.append(u);
+                first = false;
             }
-            out.println(userList);
+            String payload = sb.toString();
+            // send to all clients; sendLine handles failures quietly
+            for (ClientHandler ch : clients.values()) {
+                ch.sendLine(payload);
+            }
+        }
+
+        /** Safe getter from BSON Document */
+        private String safeGetString(Document d, String key) {
+            if (d == null) return "";
+            Object o = d.get(key);
+            return o == null ? "" : o.toString();
+        }
+
+        private void cleanup() {
+            try {
+                if (username != null) {
+                    clients.remove(username);
+                    // optionally remove user from cached rooms (keep history in DB)
+                    // remove user from any in-memory room participant sets
+                    for (Map.Entry<String, Set<String>> e : rooms.entrySet()) {
+                        Set<String> set = e.getValue();
+                        if (set != null) set.remove(username);
+                    }
+                    broadcastUserList();
+                }
+                closeSocket();
+            } catch (Exception ignored) {}
+        }
+
+        private void closeSocket() {
+            try {
+                if (socket != null && !socket.isClosed()) socket.close();
+            } catch (IOException ignored) {}
         }
     }
 }
