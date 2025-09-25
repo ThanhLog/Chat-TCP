@@ -4,7 +4,7 @@
     </a>
 </h2>
 <h2 align="center">
-   Ứng dụng chat Client-Server sử dụng TCP
+   ỨNG DỤNG CHAT SỬ DỤNG GIAO THỨC TCP
 </h2>
 <div align="center">
     <p align="center">
