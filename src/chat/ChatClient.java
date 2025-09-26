@@ -29,39 +29,90 @@ public class ChatClient extends JFrame {
     public ChatClient(String username) {
         this.username = username;
         setTitle("Chat - " + username);
-        setSize(800, 500);
+        setSize(900, 600);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout());
 
-        // Panel trái: danh sách user
+        // ===== Khung trái: Danh sách user =====
         JPanel leftPanel = new JPanel(new BorderLayout());
-        leftPanel.setPreferredSize(new Dimension(180, 0));
-        leftPanel.add(new JLabel("Online Users"), BorderLayout.NORTH);
+        leftPanel.setPreferredSize(new Dimension(200, 0));
+
+        JLabel onlineLabel = new JLabel("Online Users", SwingConstants.CENTER);
+        onlineLabel.setFont(new Font("Arial", Font.BOLD, 14));
+        onlineLabel.setBorder(new EmptyBorder(10, 0, 10, 0));
+        leftPanel.add(onlineLabel, BorderLayout.NORTH);
+
         userList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         leftPanel.add(new JScrollPane(userList), BorderLayout.CENTER);
+
+        JButton logoutButton = new JButton("Đăng xuất");
+        logoutButton.setBackground(Color.RED);
+        logoutButton.setForeground(Color.WHITE);
+        logoutButton.setFont(new Font("Arial", Font.BOLD, 13));
+        logoutButton.addActionListener(e -> logout());
+        leftPanel.add(logoutButton, BorderLayout.SOUTH);
+
         add(leftPanel, BorderLayout.WEST);
 
-        // Panel phải: khung chat + input
+        // ===== Khung phải: Chat =====
         JPanel rightPanel = new JPanel(new BorderLayout());
 
+        // Tiêu đề người chat (Header)
+        JLabel chatTitle = new JLabel("", SwingConstants.LEFT); // Mặc định hiển thị username của mình
+        chatTitle.setFont(new Font("Arial", Font.BOLD, 15));
+        chatTitle.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Color.LIGHT_GRAY));
+        rightPanel.add(chatTitle, BorderLayout.NORTH);
+
+
+        // Lịch sử tin nhắn
         chatPanel.setLayout(new BoxLayout(chatPanel, BoxLayout.Y_AXIS));
         chatPanel.setBorder(new EmptyBorder(10, 10, 10, 10));
         chatScroll = new JScrollPane(chatPanel);
         chatScroll.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
         rightPanel.add(chatScroll, BorderLayout.CENTER);
 
-        // Ô nhập tin nhắn
+     // Ô nhập + nút gửi + nút gửi file
+        JPanel inputPanel = new JPanel(new BorderLayout(5, 5));
         inputField.setPreferredSize(new Dimension(0, 40));
-        rightPanel.add(inputField, BorderLayout.SOUTH);
+
+        JButton sendButton = new JButton("Gửi");
+        sendButton.setBackground(new Color(0, 120, 215));
+        sendButton.setForeground(Color.WHITE);
+        sendButton.setFont(new Font("Arial", Font.BOLD, 13));
+
+        JButton fileButton = new JButton("📎"); // nút chọn file
+        fileButton.setFont(new Font("Arial", Font.BOLD, 16));
+
+        // Thêm nút vào panel
+        JPanel rightButtons = new JPanel(new GridLayout(1, 2, 5, 5));
+        rightButtons.add(fileButton);
+        rightButtons.add(sendButton);
+
+        inputPanel.add(inputField, BorderLayout.CENTER);
+        inputPanel.add(rightButtons, BorderLayout.EAST);
+        rightPanel.add(inputPanel, BorderLayout.SOUTH);
+
 
         add(rightPanel, BorderLayout.CENTER);
 
+        // Sự kiện chọn file
+        fileButton.addActionListener(e -> {
+            JFileChooser fileChooser = new JFileChooser();
+            int result = fileChooser.showOpenDialog(ChatClient.this);
+            if (result == JFileChooser.APPROVE_OPTION) {
+                File selectedFile = fileChooser.getSelectedFile();
+                sendFile(selectedFile);
+            }
+        });
+
+        
         // Sự kiện chọn user
         userList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 String selectedUser = userList.getSelectedValue();
                 if (selectedUser != null && !selectedUser.equals(currentTargetUser)) {
                     currentTargetUser = selectedUser;
+                    chatTitle.setText(selectedUser);
                     out.println("CREATE_OR_GET_ROOM:" + username + "," + selectedUser);
                 }
             }
@@ -73,13 +124,30 @@ public class ChatClient extends JFrame {
             if (!text.isEmpty() && currentRoom != null) {
                 out.println("SEND:" + currentRoom + ":" + text);
                 inputField.setText("");
-                // KHÔNG append ở đây
             }
         });
 
-
         // Kết nối server
         connectToServer();
+    }
+
+    // Xử lý đăng xuất
+    private void logout() {
+        try {
+            if (out != null) {
+                out.println("LOGOUT");
+            }
+            if (socket != null && !socket.isClosed()) {
+                socket.close();
+            }
+            dispose(); // đóng cửa sổ chat
+            // Quay về màn hình đăng nhập
+            SwingUtilities.invokeLater(() -> {
+                new authencation.LoginClient().setVisible(true);
+            });
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     private void connectToServer() {
@@ -155,16 +223,17 @@ public class ChatClient extends JFrame {
         JPanel bubble = new JPanel(new BorderLayout());
         bubble.setBorder(new EmptyBorder(5, 5, 5, 5));
 
-        JLabel msgLabel = new JLabel("<html><p style='width:200px'>" + text + "</p></html>");
+        JLabel msgLabel = new JLabel("<html><p style='width:250px'>" + text + "</p></html>");
         msgLabel.setOpaque(true);
         msgLabel.setBorder(BorderFactory.createEmptyBorder(5, 10, 5, 10));
+        msgLabel.setFont(new Font("Arial", Font.PLAIN, 13));
 
         if (isMine) {
-            msgLabel.setBackground(new Color(0, 153, 255));
+            msgLabel.setBackground(new Color(0, 120, 215));
             msgLabel.setForeground(Color.white);
             bubble.add(msgLabel, BorderLayout.EAST);
         } else {
-            msgLabel.setBackground(new Color(220, 220, 220));
+            msgLabel.setBackground(new Color(230, 230, 230));
             bubble.add(msgLabel, BorderLayout.WEST);
         }
 
@@ -172,12 +241,32 @@ public class ChatClient extends JFrame {
         chatPanel.revalidate();
         chatPanel.repaint();
 
-        // Tự cuộn xuống cuối
         SwingUtilities.invokeLater(() -> {
             JScrollBar vertical = chatScroll.getVerticalScrollBar();
             vertical.setValue(vertical.getMaximum());
         });
     }
+
+    private void sendFile(File file) {
+        try {
+            // Đọc file thành mảng byte
+            byte[] fileData = java.nio.file.Files.readAllBytes(file.toPath());
+            String base64 = Base64.getEncoder().encodeToString(fileData);
+
+            // Gửi lên server với định dạng: SEND_FILE:roomId:fileName:fileDataBase64
+            if (currentRoom != null) {
+                out.println("SEND_FILE:" + currentRoom + ":" + file.getName() + ":" + base64);
+            }
+
+            // Hiển thị tin nhắn là link file
+            addMessage(username, "[File] " + file.getName(), true);
+
+        } catch (IOException e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(this, "Không thể gửi file!", "Lỗi", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
 
     public static void main(String[] args) {
         String user = JOptionPane.showInputDialog("Nhập username:");
