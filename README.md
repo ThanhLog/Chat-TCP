@@ -4,7 +4,7 @@
     </a>
 </h2>
 <h2 align="center">
-   Ứng dụng chat Client-Server sử dụng TCP
+   ỨNG DỤNG CHAT SỬ DỤNG GIAO THỨC TCP
 </h2>
 <div align="center">
     <p align="center">
@@ -37,8 +37,8 @@ Giao thức TCP (Transmission Control Protocol): TCP là giao thức truyền t�
 
 ## 3. Các chức năng trong ứng dụng.
 
-- Hiện thị trạng thái hoạt động của user.
-- Hiện thị trạng thái tin nhắn ( Đã xem, đã nhận).
+- Hiện thị danh sách user online.
+- Hiện thị trạng thái tin nhắn ( Đã xem, đã nhận). ( Đang phát triển )
 - Đăng nhập, đăng ký vào hệ thống
 
 ## 📝 4. Hình ảnh chức năng.
@@ -89,4 +89,7 @@ Giao thức TCP (Transmission Control Protocol): TCP là giao thức truyền t�
 - Biên dịch và chạy chương trình:
     ``` bash
     javac Main.java
-    java Main 
+    java Main
+
+### Liên hệ
+email: long66yy@gmail.com 
