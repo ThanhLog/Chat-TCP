@@ -69,20 +69,128 @@ public class ChatServer {
                 if (username == null || username.trim().isEmpty()) { closeSocket(); return; }
                 username = username.trim();
                 clients.put(username, this);
-                broadcastUserList(); // notify all clients of user list
+                broadcastUserList();
 
                 String line;
                 while ((line = in.readLine()) != null) {
                     if (line.startsWith("CREATE_OR_GET_ROOM:")) handleCreateRoom(line);
                     else if (line.startsWith("GET_MESSAGES:")) handleGetMessages(line);
-                    else if (line.startsWith("SEND:")) handleSend(line);
+                    else if (line.startsWith("SEND_FILE:")) handleSendFile(line);  // ✓ Thêm dòng này
+                    else if (line.startsWith("SEND:")) handleSendText(line);        // ✓ Đổi tên
                     else if (line.equalsIgnoreCase("GET_USERS")) sendUserList();
-                    // unknown commands are ignored silently
+                    else if (line.equalsIgnoreCase("LOGOUT")) break;
                 }
             } catch (IOException e) {
-                // connection lost or IO error; do not print chat contents
+                // connection lost
             } finally {
                 cleanup();
+            }
+        }
+
+        // Tách riêng method xử lý TEXT
+        private void handleSendText(String line) {
+            try {
+                // Format: SEND:roomId:message
+                String[] parts = line.split(":", 3);
+                if (parts.length < 3) return;
+                String roomId = parts[1].trim();
+                String message = parts[2];
+
+                if (roomId.isEmpty() || message == null || message.trim().isEmpty()) return;
+
+                // Lưu vào MongoDB
+                MongoDBUtil.saveMessage(roomId, username, message, "TEXT", null);
+
+                // Đảm bảo danh sách user trong phòng có trong cache
+                Set<String> participants = rooms.computeIfAbsent(roomId, r -> {
+                    Document doc = MongoDBUtil.getDatabase()
+                            .getCollection("chat_rooms")
+                            .find(Filters.eq("_id", r))
+                            .first();
+                    if (doc != null) {
+                        List<String> us = doc.getList("users", String.class);
+                        return new HashSet<>(us != null ? us : Collections.emptyList());
+                    }
+                    return new HashSet<>();
+                });
+
+                participants.add(username);
+
+                String createdAt = Instant.now().toString();
+                for (String user : participants) {
+                    ClientHandler ch = clients.get(user);
+                    if (ch != null) {
+                        ch.sendLine("MSG:" + roomId + ":" + username + ":" + message + ":" + createdAt);
+                        System.out.println("💬 Sent message from " + username + " to " + user);
+                    } else {
+                        System.out.println("⚠️  User " + user + " offline (message not sent)");
+                    }
+                }
+
+            } catch (Exception e) {
+                e.printStackTrace();
+                sendLine("ERROR:SEND");
+            }
+        }
+
+        // Tách riêng method xử lý FILE
+        private void handleSendFile(String line) {
+            try {
+                // Format: SEND_FILE:roomId:fileName:base64
+                String[] parts = line.split(":", 4);
+                if (parts.length < 4) {
+                    System.err.println("Invalid SEND_FILE format: " + line.substring(0, Math.min(50, line.length())));
+                    return;
+                }
+                
+                String roomId = parts[1].trim();
+                String fileName = parts[2].trim();
+                String base64 = parts[3];
+
+                if (roomId.isEmpty() || fileName.isEmpty() || base64 == null || base64.trim().isEmpty()) {
+                    System.err.println("Empty field in SEND_FILE");
+                    return;
+                }
+
+                System.out.println("📎 Receiving file: " + fileName + " for room: " + roomId);
+
+                // Lưu vào MongoDB
+                MongoDBUtil.saveMessage(roomId, username, base64, "FILE", fileName);
+
+                // Đảm bảo danh sách user trong phòng có trong cache
+                Set<String> participants = rooms.computeIfAbsent(roomId, r -> {
+                    Document doc = MongoDBUtil.getDatabase()
+                            .getCollection("chat_rooms")
+                            .find(Filters.eq("_id", r))
+                            .first();
+                    if (doc != null) {
+                        List<String> us = doc.getList("users", String.class);
+                        return new HashSet<>(us != null ? us : Collections.emptyList());
+                    }
+                    return new HashSet<>();
+                });
+
+                participants.add(username);
+
+                String createdAt = Instant.now().toString();
+                int sentCount = 0;
+                for (String user : participants) {
+                    ClientHandler ch = clients.get(user);
+                    if (ch != null) {
+                        ch.sendLine("FILE_MSG:" + roomId + ":" + username + ":" + fileName + ":" + base64 + ":" + createdAt);
+                        System.out.println("📎 Sent file '" + fileName + "' from " + username + " to " + user);
+                        sentCount++;
+                    } else {
+                        System.out.println("⚠️  User " + user + " offline (file not sent)");
+                    }
+                }
+                
+                System.out.println("✓ File sent to " + sentCount + "/" + participants.size() + " participants");
+
+            } catch (Exception e) {
+                System.err.println("Error handling file send:");
+                e.printStackTrace();
+                sendLine("ERROR:SEND_FILE");
             }
         }
 
@@ -113,64 +221,39 @@ public class ChatServer {
             }
         }
 
-        private void handleGetMessages(String line) {
-            try {
-                String[] parts = line.split(":", 2);
-                if (parts.length < 2) return;
-                String roomId = parts[1].trim();
-                if (roomId.isEmpty()) return;
+private void handleGetMessages(String line) {
+    try {
+        String[] parts = line.split(":", 2);
+        if (parts.length < 2) return;
+        String roomId = parts[1].trim();
+        if (roomId.isEmpty()) return;
 
-                List<Document> msgs = MongoDBUtil.getMessages(roomId);
-                for (Document m : msgs) {
-                    String sender = safeGetString(m, "username");
-                    String content = safeGetString(m, "message"); // base64 stored
-                    String createAt = safeGetString(m, "createAt");
-                    sendLine("MSG:" + roomId + ":" + sender + ":" + content + ":" + createAt);
-                }
-                sendLine("END_MESSAGES");
-            } catch (Exception e) {
-                sendLine("ERROR:GET_MESSAGES");
+        List<Document> msgs = MongoDBUtil.getMessages(roomId);
+        for (Document m : msgs) {
+            String sender = safeGetString(m, "username");
+            String content = safeGetString(m, "message");
+            String type = safeGetString(m, "type");
+            String createAt = safeGetString(m, "createAt");
+            
+            if ("FILE".equals(type)) {
+                // Gửi tin nhắn dạng file
+                String fileName = safeGetString(m, "fileName");
+                sendLine("FILE_MSG:" + roomId + ":" + sender + ":" + fileName + ":" + content + ":" + createAt);
+            } else {
+                // Gửi tin nhắn text
+                sendLine("MSG:" + roomId + ":" + sender + ":" + content + ":" + createAt);
             }
         }
+        sendLine("END_MESSAGES");
+    } catch (Exception e) {
+        System.err.println("Error in handleGetMessages:");
+        e.printStackTrace();
+        sendLine("ERROR:GET_MESSAGES");
+    }
+}
 
-        private void handleSend(String line) {
-            try {
-                String[] parts = line.split(":", 3);
-                if (parts.length < 3) return;
-                String roomId = parts[1].trim();
-                String base64 = parts[2];
-                if (roomId.isEmpty() || base64 == null) return;
 
-                // save to DB (store base64 as-is)
-                MongoDBUtil.saveMessage(roomId, username, base64, "SEND");
-
-                // ensure room participants cached (thread-safe computeIfAbsent)
-                rooms.computeIfAbsent(roomId, r -> {
-                    Document doc = MongoDBUtil.getDatabase().getCollection("chat_rooms")
-                            .find(Filters.eq("_id", r)).first();
-                    if (doc != null) {
-                        List<String> us = doc.getList("users", String.class);
-                        return new HashSet<>(us != null ? us : Collections.emptyList());
-                    }
-                    return new HashSet<>();
-                });
-
-                String createAt = Instant.now().toString();
-                Set<String> participants = rooms.getOrDefault(roomId, Collections.emptySet());
-
-                // Broadcast only to participants that are currently online
-                for (String user : participants) {
-                    ClientHandler ch = clients.get(user);
-                    if (ch != null) {
-                        ch.sendLine("MSG:" + roomId + ":" + username + ":" + base64 + ":" + createAt);
-                    }
-                }
-                // Server intentionally does NOT print message contents to console.
-            } catch (Exception e) {
-                sendLine("ERROR:SEND");
-            }
-        }
-
+        
         private void sendUserList() {
             StringBuilder sb = new StringBuilder("USER_LIST:");
             boolean first = true;

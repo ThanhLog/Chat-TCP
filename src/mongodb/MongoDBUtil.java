@@ -92,24 +92,37 @@ public class MongoDBUtil {
         return roomId;
     }
 
-    public static void saveMessage(String roomId, String sender, String base64Content, String send) {
+    public static void saveMessage(String roomId, String sender, String content, String type, String fileName) {
         var coll = getDatabase().getCollection("chat_rooms");
         String now = Instant.now().toString();
+
+        // Tạo Document tin nhắn
         Document msg = new Document("username", sender)
-                .append("message", base64Content)
                 .append("createAt", now)
-        		.append("send", send);
+                .append("type", type)
+                .append("message", content);  // lưu cả TEXT lẫn FILE (FILE vẫn là base64 string)
+
+        if ("FILE".equals(type) && fileName != null) {
+            msg.append("fileName", fileName);
+        }
+
+        // Kiểm tra phòng có tồn tại không
         Document room = coll.find(Filters.eq("_id", roomId)).first();
         if (room == null) {
-            // create minimal room if missing
+            // Nếu chưa có, tạo mới
             Document newRoom = new Document("_id", roomId)
-                    .append("users", Arrays.asList("unknownA", "unknownB"))
+                    .append("users", Arrays.asList(sender))
                     .append("messages", Arrays.asList(msg));
             coll.insertOne(newRoom);
+            System.out.println("🆕 Created new chat room: " + roomId);
         } else {
+            // Nếu có rồi thì thêm message mới
             coll.updateOne(Filters.eq("_id", roomId), Updates.push("messages", msg));
+            System.out.println("💾 Message (" + type + ") saved to room: " + roomId);
         }
     }
+
+
 
     public static List<Document> getMessages(String roomId) {
         var coll = getDatabase().getCollection("chat_rooms");
